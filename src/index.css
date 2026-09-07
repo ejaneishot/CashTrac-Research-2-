@@ -1,0 +1,97 @@
+@import 'tailwindcss';
+@import '@fontsource-variable/geist';
+@import '@fontsource-variable/geist-mono';
+
+@theme {
+  --font-sans: 'Geist Variable', ui-sans-serif, system-ui, sans-serif;
+  --font-mono: 'Geist Mono Variable', ui-monospace, 'SF Mono', monospace;
+
+  /* Surfaces — zinc family, never pure black */
+  --color-surface: #09090b; /* zinc-950 */
+  --color-surface-raised: #101014;
+  --color-surface-hover: #18181b; /* zinc-900 */
+  --color-surface-muted: #1c1c21;
+  --color-line: #27272a; /* zinc-800 */
+  --color-line-soft: #1f1f23;
+  --color-ink: #fafafa; /* zinc-50 */
+  --color-ink-muted: #a1a1aa; /* zinc-400 */
+  --color-ink-faint: #71717a; /* zinc-500 */
+
+  /* Accent — emerald, desaturated for elegance */
+  --color-pos: #34d399; /* emerald-400 */
+  --color-pos-soft: rgba(52, 211, 153, 0.12);
+  --color-neg: #fb7185; /* rose-400 */
+  --color-neg-soft: rgba(251, 113, 133, 0.12);
+  --color-accent: #2dd4bf; /* teal-400 */
+
+  --radius-card: 2.5rem;
+
+  --shadow-diffuse: 0 20px 40px -15px rgba(0, 0, 0, 0.45);
+
+  --ease-spring: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@layer base {
+  * {
+    border-color: var(--color-line);
+  }
+
+  html {
+    color-scheme: dark;
+  }
+
+  body {
+    margin: 0;
+    background: var(--color-surface);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    font-size: 16px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+  }
+
+  ::selection {
+    background: var(--color-pos-soft);
+    color: var(--color-ink);
+  }
+
+  /* Numbers always get the mono face */
+  .tnum {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.02em;
+  }
+
+  /* Subtle grain overlay — fixed, pointer-events-none */
+  .grain::after {
+    content: '';
+    position: fixed;
+    inset: 0;
+    z-index: 50;
+    pointer-events: none;
+    opacity: 0.035;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='120' height='120' filter='url(%23n)'/%3E%3C/svg%3E");
+  }
+
+  /* Focus rings */
+  :focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 2px;
+  }
+
+  /* Scrollbar */
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: var(--color-surface-muted);
+    border-radius: 8px;
+    border: 2px solid var(--color-surface);
+  }
+}
