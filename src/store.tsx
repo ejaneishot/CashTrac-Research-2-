@@ -1,7 +1,8 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react'
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import type { Account, AppData, RevenueRow, Transaction, Workspace } from './types'
 import { mockData, mockWorkspaces } from './lib/mock'
+import { flushPending } from './lib/sync'
 import {
   hasClientId,
   loadGoogleScripts,
@@ -12,6 +13,7 @@ import {
 // added ts
 import {
   loadAll,
+  hydrateAll, 
   loadOrSeed,
   saveTransaction,
   saveAccount,
@@ -20,9 +22,12 @@ import {
   deleteRevenue,
 } from './lib/repository'
 
+import { getModifiedTime, findLedgersFolder } from './lib/drive'
 import { initWorkspaceStructure } from './lib/setup'
-
-export interface Toast {
+import { readMeta, readAllTransactions, appendRawRows } from './lib/sheets'
+import { createLedgerSpreadsheet } from './lib/setup'
+export interface Toast
+ {
   id: number
   kind: 'success' | 'error' | 'info'
   message: string
@@ -51,7 +56,7 @@ interface StoreState {
   refresh: () => Promise<void>
 
   // actions
-  addAccount: (acc: Omit<Account, 'id' | 'sheetId'>) => void
+  addAccount: (acc: Omit<Account, 'id' | 'sheetId'>) => Promise<void>
   markTransaction: (tx: Transaction, category?: string) => void
   skipTransaction: (tx: Transaction) => void
   addRevenueRow: (row: Omit<RevenueRow, 'id'>) => void
@@ -90,6 +95,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [data, setData] = useState<AppData>({ groups: [], accounts: [], transactions: [], revenue: [] })
   const [loading, setLoading] = useState(false)
   const [toasts, setToasts] = useState<Toast[]>([])
+  const lastMetaSync = useRef<string | undefined>(undefined)
 
   const pushToast = useCallback((kind: Toast['kind'], message: string) => {
     const id = toastSeq++
@@ -132,10 +138,68 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       setLoading(false)
       return
     }
+
+    const ws = workspaces.find((w) => w.id === activeWorkspaceId)
+    if (!ws?.metaSpreadsheetId) {
+      setData(await loadAll())
+      return
+    }
+
     setLoading(true)
-    // Real Google reads land here in Phase 3+; keep UI working meanwhile.
-    setLoading(false)
-  }, [mockMode])
+    try {
+      const remoteTime = await getModifiedTime(ws.metaSpreadsheetId)
+      if (remoteTime && remoteTime === lastMetaSync.current) {
+        setData(await loadAll())
+        return
+      }
+
+      const meta = await readMeta(ws.metaSpreadsheetId)
+      await flushPending(meta.accounts)
+            const { transactions: remote, failedAccountIds } = await readAllTransactions(meta.accounts)
+      const local = await loadAll()
+
+            const failed = new Set(failedAccountIds)
+      const remoteById = new Map(remote.map((t) => [t.id, t]))
+
+      const keepLocal = local.transactions
+        .filter((t) => t.syncState === 'pending' || failed.has(t.accountId))
+        .map((t) => {
+          const r = remoteById.get(t.id)
+          if (!r || t.syncState !== 'pending') return t
+
+          // Untouched remotely since our copy: our edit is safe to push.
+          if (!r.updatedAt || !t.updatedAt || r.updatedAt <= t.updatedAt) return t
+
+          // Remote is newer. Money fields differing needs a human.
+          const financialMismatch =
+            r.amount !== t.amount ||
+            r.date !== t.date ||
+            r.balance !== t.balance ||
+            r.description !== t.description
+
+          if (financialMismatch) return { ...t, syncState: 'conflict' as const }
+
+          // Otherwise last write wins on the editable fields.
+          return { ...r, syncState: 'synced' as const }
+        })
+
+      const keepIds = new Set(keepLocal.map((t) => t.id))
+      const merged = [...remote.filter((t) => !keepIds.has(t.id)), ...keepLocal]
+
+      if (failedAccountIds.length > 0) {
+        pushToast('error', `Could not read ${failedAccountIds.length} account ledger(s)`)
+      }
+
+      await hydrateAll({ ...local, ...meta, transactions: merged })
+      lastMetaSync.current = remoteTime ?? undefined
+      setData(await loadAll())
+    } catch (err) {
+      pushToast('error', `Refresh failed: ${(err as Error).message}`)
+      setData(await loadAll())
+    } finally {
+      setLoading(false)
+    }
+  }, [mockMode, workspaces, activeWorkspaceId, pushToast])
 
   const signIn = useCallback(async () => {
     try {
@@ -175,14 +239,16 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     if (!id) return { ok: false, error: 'Could not read a folder id from that link.' }
     const name = folderLink.split('/').pop() ?? 'Workspace'
 
-        try {
+        let metaSpreadsheetId: string
+    try {
       await ensureToken()
-      await initWorkspaceStructure(id)
+      const result = await initWorkspaceStructure(id)
+      metaSpreadsheetId = result.metaSpreadsheetId
     } catch (err) {
       return { ok: false, error: `Setup failed: ${(err as Error).message}` }
     }
 
-    const ws: Workspace = { id, name, folderId: id, folderLink }
+    const ws: Workspace = { id, name, folderId: id, folderLink, metaSpreadsheetId }
     setWorkspaces((prev) => {
       const next = prev.some((w) => w.folderId === id) ? prev : [...prev, ws]
       persistWorkspaces(next)
@@ -201,9 +267,23 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     if (activeWorkspaceId === id) setActiveWorkspaceId(undefined)
   }, [activeWorkspaceId, persistWorkspaces])
 
-    const addAccount = useCallback((acc: Omit<Account, 'id' | 'sheetId'>) => {
+  
+   const addAccount = useCallback(async (acc: Omit<Account, 'id' | 'sheetId'>) => {
     const id = acc.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '')
-    const account: Account = { ...acc, id, sheetId: `mock-${id}` }
+    const ws = workspaces.find((w) => w.id === activeWorkspaceId)
+
+    let sheetId = `mock-${id}`
+    if (!mockMode && ws?.metaSpreadsheetId) {
+      try {
+        const ledgersFolderId = await findLedgersFolder(ws.folderId)
+        sheetId = await createLedgerSpreadsheet(acc.name, ledgersFolderId)
+      } catch (err) {
+        pushToast('error', `Could not create ledger: ${(err as Error).message}`)
+        return
+      }
+    }
+
+    const account: Account = { ...acc, id, sheetId }
     const updatedGroups = data.groups.map((g) =>
       g.id === acc.groupId ? { ...g, accountIds: [...g.accountIds, id] } : g,
     )
@@ -211,8 +291,21 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     setData((d) => ({ ...d, accounts: [...d.accounts, account], groups: updatedGroups }))
     void saveAccount(account)
     if (updatedGroup) void saveGroup(updatedGroup)
+
+    if (!mockMode && ws?.metaSpreadsheetId) {
+      try {
+        await appendRawRows(ws.metaSpreadsheetId, 'Accounts', [[
+          account.id, account.name, account.type, account.owner,
+          account.groupId ?? '', account.sheetId, account.currency ?? 'IDR',
+          '', '', account.cadenceDays ?? '',
+        ]])
+      } catch (err) {
+        pushToast('error', `Saved locally, but Meta update failed: ${(err as Error).message}`)
+      }
+    }
+
     pushToast('success', `Account ${acc.name} added`)
-  }, [data.groups, pushToast])
+  }, [data.groups, workspaces, activeWorkspaceId, mockMode, pushToast])
 
     const markTransaction = useCallback((tx: Transaction, category?: string) => {
     const updated: Transaction = { ...tx, marked: true, category: category ?? tx.category }

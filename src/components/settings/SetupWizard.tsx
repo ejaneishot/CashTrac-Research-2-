@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useStore } from '../../store'
-import { verifyWorkspaceFolder, initWorkspaceStructure } from '../../lib/setup'
+import { verifyWorkspaceFolder } from '../../lib/setup'
 import { CheckCircle, WarningCircle, Link, SpinnerGap } from '@phosphor-icons/react'
 
 type Stage = 'idle' | 'verifying' | 'creating' | 'done' | 'error'
@@ -44,9 +44,8 @@ export function SetupWizard() {
       return
     }
 
-    setStage('creating')
+        setStage('creating')
     try {
-      await initWorkspaceStructure(verify.folderId)
       const res = await connectWorkspace(trimmed)
       if (!res.ok) throw new Error(res.error ?? 'connect failed')
       setStage('done')

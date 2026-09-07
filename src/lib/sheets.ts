@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Google Sheets API wrappers — typed thin layer over gapi.client.sheets.
  */
 
@@ -29,6 +29,15 @@ export async function valuesGet(spreadsheetId: string, range: string): Promise<s
   return res.result.values ?? []
 }
 
+export async function valuesBatchGet(
+  spreadsheetId: string,
+  ranges: string[],
+): Promise<string[][][]> {
+  const res = await sheets().spreadsheets.values.batchGet({ spreadsheetId, ranges })
+  const result = res.result as { valueRanges?: { values?: string[][] }[] }
+  return (result.valueRanges ?? []).map((vr) => vr.values ?? [])
+}
+
 export async function valuesAppend(
   spreadsheetId: string,
   range: string,
@@ -39,7 +48,7 @@ export async function valuesAppend(
     range,
     valueInputOption: 'USER_ENTERED',
     insertDataOption: 'INSERT_ROWS',
-    requestBody: { values },
+    resource: { values },
   })
 }
 
@@ -52,7 +61,7 @@ export async function valuesUpdate(
     spreadsheetId,
     range,
     valueInputOption: 'USER_ENTERED',
-    requestBody: { values },
+    resource: { values },
   })
 }
 
@@ -62,7 +71,7 @@ export async function createSpreadsheet(title: string): Promise<string> {
   if (!drive) throw new Error('Drive API not loaded')
   const res = await drive.files.create({
     fields: 'id',
-    requestBody: {
+    resource: {
       name: title,
       mimeType: 'application/vnd.google-apps.spreadsheet',
     },
@@ -78,7 +87,7 @@ export async function ensureSheetTabs(spreadsheetId: string, tabs: string[]): Pr
 
   await sheets().spreadsheets.batchUpdate({
     spreadsheetId,
-    requestBody: {
+    resource: {
       requests: missing.map((title) => ({
         addSheet: { properties: { title } },
       })),
@@ -195,3 +204,125 @@ export async function readTransactions(spreadsheetId: string): Promise<Transacti
   }))
 }
   
+// Read Accounts, Groups and Revenue from the Meta spreadsheet in one request
+export async function readMeta(spreadsheetId: string): Promise<{
+  accounts: Account[]
+  groups: Group[]
+  revenue: RevenueRow[]
+}> {
+  const [accountRows, groupRows, revenueRows] = await valuesBatchGet(spreadsheetId, [
+    'Accounts!A1:J',
+    'Groups!A1:D',
+    'Revenue!A1:G',
+  ])
+
+  const parse = <T>(rows: string[][], build: (idx: (n: string) => number, r: string[]) => T): T[] => {
+    const header = rows[0] ?? []
+    const idx = (name: string) => header.indexOf(name)
+    return rows.slice(1).filter((r) => r[0]).map((r) => build(idx, r))
+  }
+
+  const accounts = parse<Account>(accountRows, (idx, r) => ({
+    id: r[idx('id')],
+    name: r[idx('name')],
+    type: (r[idx('type')] as Account['type']) ?? 'bank',
+    owner: (r[idx('owner')] as Account['owner']) ?? 'nirmal',
+    groupId: r[idx('groupId')],
+    sheetId: r[idx('sheetId')],
+    currency: r[idx('currency')] ?? 'IDR',
+    lastUpdated: r[idx('lastUpdated')] || undefined,
+    lastTransactionDate: r[idx('lastTransactionDate')] || undefined,
+    cadenceDays: r[idx('cadenceDays')] ? Number(r[idx('cadenceDays')]) : undefined,
+  }))
+
+  const groups = parse<Group>(groupRows, (idx, r) => ({
+    id: r[idx('id')],
+    name: r[idx('name')],
+    accountIds: (r[idx('accountIds')] ?? '').split(',').map((s) => s.trim()).filter(Boolean),
+    owner: (r[idx('owner')] as Group['owner']) ?? 'shared',
+  }))
+
+  const revenue = parse<RevenueRow>(revenueRows, (idx, r) => ({
+    id: r[idx('id')],
+    date: r[idx('date')],
+    type: (r[idx('type')] as RevenueRow['type']) ?? 'unearned',
+    description: r[idx('description')],
+    amount: Number(r[idx('amount')]) || 0,
+    driveLink: r[idx('driveLink')] || undefined,
+    note: r[idx('note')] || undefined,
+  }))
+
+  return { accounts, groups, revenue }
+}
+
+// Read transactions from every account's ledger spreadsheet
+export async function readAllTransactions(accounts: Account[]): Promise<{
+  transactions: Transaction[]
+  failedAccountIds: string[]
+}> {
+  const withSheets = accounts.filter((a) => a.sheetId && !a.sheetId.startsWith('mock-'))
+  const failedAccountIds: string[] = []
+
+  const results = await Promise.all(
+    withSheets.map(async (a) => {
+      try {
+        return await readTransactions(a.sheetId)
+      } catch {
+        failedAccountIds.push(a.id)
+        return []
+      }
+    }),
+  )
+
+  return { transactions: results.flat(), failedAccountIds }
+}
+
+export async function appendRawRows(
+  spreadsheetId: string,
+  tab: string,
+  rows: (string | number | boolean | null)[][],
+): Promise<void> {
+  if (rows.length === 0) return
+  await valuesAppend(spreadsheetId, `${tab}!A1`, rows)
+}
+
+/** Turn a transaction into a sheet row, in TRANSACTION_HEADERS order. */
+function transactionToRow(t: Transaction): (string | number)[] {
+  return [
+    t.id, t.accountId, t.date, t.description, t.category ?? '',
+    t.amount, t.balance ?? '', t.source ?? '', t.sourceLink ?? '',
+    t.fingerprint ?? '', t.importedAt ?? '', t.marked ? 'TRUE' : 'FALSE',
+    t.invoiceLink ?? '', t.notes ?? '', t.updatedAt ?? '',
+    'synced', t.deletedAt ?? '',
+  ]
+}
+
+// Update existing transaction rows in the sheet. Returns the ids of the updated transactions.
+export async function updateTransactionRows(
+  spreadsheetId: string,
+  rows: Transaction[],
+): Promise<string[]> {
+  if (rows.length === 0) return []
+
+  const existing = await valuesGet(spreadsheetId, 'Transactions!A1:Q')
+  const rowIndexById = new Map<string, number>()
+  existing.slice(1).forEach((r, i) => {
+    if (r[0]) rowIndexById.set(r[0], i + 2)
+  })
+
+  const data = rows
+    .filter((t) => rowIndexById.has(t.id))
+    .map((t) => ({
+      range: `Transactions!A${rowIndexById.get(t.id)}:Q${rowIndexById.get(t.id)}`,
+      values: [transactionToRow(t)],
+    }))
+
+  if (data.length === 0) return []
+
+  await sheets().spreadsheets.values.batchUpdate({
+    spreadsheetId,
+    resource: { valueInputOption: 'USER_ENTERED', data },
+  })
+
+  return rows.filter((t) => rowIndexById.has(t.id)).map((t) => t.id)
+}

@@ -32,8 +32,10 @@ declare global {
         sheets?: {
           spreadsheets: {
             get: (req: Record<string, unknown>) => Promise<{ result: Record<string, unknown> }>
-            values: {
+                        values: {
               get: (req: Record<string, unknown>) => Promise<{ result: { values?: string[][] } }>
+              batchGet: (req: Record<string, unknown>) => Promise<{ result: unknown }>
+              batchUpdate: (req: Record<string, unknown>) => Promise<{ result: unknown }>
               append: (req: Record<string, unknown>) => Promise<{ result: unknown }>
               update: (req: Record<string, unknown>) => Promise<{ result: unknown }>
             }
@@ -44,7 +46,7 @@ declare global {
           files: {
             list: (req: Record<string, unknown>) => Promise<{ result: { files?: { id: string; name: string }[] } }>
             create: (req: Record<string, unknown>) => Promise<{ result: { id: string } }>
-            get: (req: Record<string, unknown>) => Promise<{ result: { id: string; name: string } }>
+            get: (req: Record<string, unknown>) => Promise<{ result: { id: string; name: string; modifiedTime?: string } }>
             update: (req: Record<string, unknown>) => Promise<{ result: { id: string } }>
           }
         }

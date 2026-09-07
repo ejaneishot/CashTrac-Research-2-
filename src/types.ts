@@ -67,6 +67,7 @@ export interface Workspace {
   name: string
   folderId: string
   folderLink: string
+  metaSpreadsheetId?: string
 }
 
 export interface AppData {

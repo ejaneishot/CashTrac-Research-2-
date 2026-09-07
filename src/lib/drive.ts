@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Drive API wrappers — workspace discovery, folder resolution, raw-file upload.
  */
 
@@ -72,11 +72,34 @@ export function driveFileLink(fileId: string): string {
   return `https://drive.google.com/open?id=${fileId}`
 }
 
-/** Create a folder inside a parent. Returns its id. */
+// Create a folder under a parent. Returns the new folder id.
 export async function createFolder(parentId: string, name: string): Promise<string> {
   const res = await drive().files.create({
     fields: 'id',
-    requestBody: { name, mimeType: DRIVE_FOLDER, parents: [parentId] },
+    resource: { name, mimeType: DRIVE_FOLDER, parents: [parentId] },
   })
   return res.result.id
+}
+
+// Get the modified time of a file. Returns null if not found or error
+export async function getModifiedTime(fileId: string): Promise<string | null> {
+  try {
+    const res = await drive().files.get({ fileId, fields: 'modifiedTime' })
+    return res.result.modifiedTime ?? null
+  } catch {
+    return null
+  }
+}
+
+// Find the ledgers folder under a workspace folder. Throws if not found.
+export async function findLedgersFolder(workspaceFolderId: string): Promise<string> {
+  const roots = await listFolders(workspaceFolderId)
+  const root = roots.find((f) => f.name === '_cashtrac')
+  if (!root) throw new Error('No _cashtrac folder in this workspace')
+
+  const subs = await listFolders(root.id)
+  const ledgers = subs.find((f) => f.name === 'ledgers')
+  if (!ledgers) throw new Error('No ledgers folder found')
+
+  return ledgers.id
 }
