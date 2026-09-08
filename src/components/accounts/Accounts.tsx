@@ -4,6 +4,7 @@ import { useStore } from '../../store'
 import { formatIDR } from '../../lib/money'
 import { relativeDayLabel } from '../../lib/dates'
 import type { AccountType, OwnerId } from '../../types'
+import { StatementDropzone } from '../import/StatementDropzone'
 import {
   Plus, X, UploadSimple, Building, DeviceMobile, Money, Globe,
   CheckCircle, Warning,
@@ -19,6 +20,7 @@ const TYPE_META: Record<AccountType, { icon: typeof Building; label: string }> =
 export function Accounts() {
   const { data, addAccount, pushToast } = useStore()
   const [adding, setAdding] = useState(false)
+  const [importing, setImporting] = useState<string | null>(null)
   const [name, setName] = useState('')
   const [type, setType] = useState<AccountType>('bank')
   const [groupId, setGroupId] = useState(data.groups[0]?.id ?? '')
@@ -201,7 +203,7 @@ export function Accounts() {
                   <div className="mt-4 flex items-center justify-between border-t border-line-soft pt-3 text-[11.5px] text-ink-muted">
                     <span>{isCash ? 'Cash physical ledger' : `Last tx ${a.lastTransactionDate ? relativeDayLabel(a.lastTransactionDate) : '—'}`}</span>
                     <button
-                      onClick={() => pushToast('info', 'Statement upload lands with the import pipeline')}
+                      onClick={() => setImporting(a.id)}
                       className="flex items-center gap-1 font-medium text-ink-muted transition-colors hover:text-pos"
                     >
                       <UploadSimple size={13} />
@@ -218,8 +220,12 @@ export function Accounts() {
               </div>
             )}
           </div>
-        </section>
+               </section>
       ))}
+
+      {importing && (
+        <StatementDropzone accountId={importing} onClose={() => setImporting(null)} />
+      )}
     </div>
   )
 }

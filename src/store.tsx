@@ -20,10 +20,12 @@ import {
   saveGroup,
   saveRevenue,
   deleteRevenue,
+  saveImportedTransactions,
 } from './lib/repository'
 
-import { getModifiedTime, findLedgersFolder } from './lib/drive'
+import { getModifiedTime, findLedgersFolder, uploadStatement } from './lib/drive'
 import { initWorkspaceStructure } from './lib/setup'
+import { readStatementFile, buildImportReport, type ImportReport } from './lib/importer'
 import { readMeta, readAllTransactions, appendRawRows } from './lib/sheets'
 import { createLedgerSpreadsheet } from './lib/setup'
 export interface Toast
@@ -60,7 +62,12 @@ interface StoreState {
   markTransaction: (tx: Transaction, category?: string) => void
   skipTransaction: (tx: Transaction) => void
   addRevenueRow: (row: Omit<RevenueRow, 'id'>) => void
-  deleteRevenueRow: (id: string) => void
+    deleteRevenueRow: (id: string) => void
+
+  // statement import
+  prepareImport: (file: File, accountId: string) => Promise<ImportReport>
+  commitImport: (report: ImportReport) => Promise<number>
+  recordPdfStatement: (file: File, accountId: string) => Promise<string>
 
   // toasts
   toasts: Toast[]
@@ -158,7 +165,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             const { transactions: remote, failedAccountIds } = await readAllTransactions(meta.accounts)
       const local = await loadAll()
 
-            const failed = new Set(failedAccountIds)
+      const failed = new Set(failedAccountIds)
       const remoteById = new Map(remote.map((t) => [t.id, t]))
 
       const keepLocal = local.transactions
@@ -184,7 +191,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         })
 
       const keepIds = new Set(keepLocal.map((t) => t.id))
-      const merged = [...remote.filter((t) => !keepIds.has(t.id)), ...keepLocal]
+      const remoteIds = new Set(remote.map((t) => t.id))
+      const localOnly = local.transactions.filter((t) => !remoteIds.has(t.id) && t.syncState === 'pending')
+      const merged = [...remote.filter((t) => !keepIds.has(t.id)), ...keepLocal, ...localOnly]
 
       if (failedAccountIds.length > 0) {
         pushToast('error', `Could not read ${failedAccountIds.length} account ledger(s)`)
@@ -337,6 +346,69 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     setData((d) => ({ ...d, revenue: d.revenue.filter((r) => r.id !== id) }))
     void deleteRevenue(id)
   }, [])
+  
+  // Save a PDF statement to Drive, then create a placeholder transaction for it. Returns the Drive link.
+  const recordPdfStatement = useCallback(async (file: File, accountId: string): Promise<string> => {
+    const ws = workspaces.find((w) => w.id === activeWorkspaceId)
+    if (!ws?.folderId) throw new Error('Connect a workspace before uploading a statement')
+
+    const { webLink } = await uploadStatement(ws.folderId, file)
+    const now = new Date().toISOString()
+
+    await saveTransaction({
+      id: `pdf-${accountId}-${Date.now()}`,
+      accountId,
+      date: now.slice(0, 10),
+      description: `${file.name} — PDF statement, needs manual entry`,
+      amount: 0,
+      marked: false,
+      source: file.name,
+      sourceLink: webLink,
+      importedAt: now,
+      updatedAt: now,
+      syncState: 'pending',
+      deletedAt: null,
+    })
+
+    setData(await loadAll())
+    pushToast('success', 'Statement saved to Drive, enter the rows by hand')
+    return webLink
+  }, [workspaces, activeWorkspaceId, pushToast])
+
+    // Read the file and work out what it contains. Writes nothing.
+  const prepareImport = useCallback(async (file: File, accountId: string): Promise<ImportReport> => {
+    const { records, headerRow } = await readStatementFile(file)
+    if (headerRow === -1) {
+      throw new Error('Could not find a header row in that file. Is it a bank CSV?')
+    }
+    return buildImportReport({
+      filename: file.name,
+      accountId,
+      records,
+      existing: data.transactions,
+    })
+  }, [data.transactions])
+
+  // Save the new rows, then reload from the local database so the screen catches up.
+  const commitImport = useCallback(async (report: ImportReport): Promise<number> => {
+    const written = await saveImportedTransactions(report.transactions)
+
+    const account = data.accounts.find((a) => a.id === report.accountId)
+    if (account && written > 0) {
+      const latest = report.transactions.map((t) => t.date).sort().pop()
+      await saveAccount({
+        ...account,
+        lastUpdated: new Date().toISOString().slice(0, 10),
+        lastTransactionDate: latest ?? account.lastTransactionDate,
+      })
+    }
+
+    const fresh = await loadAll()
+    setData((d) => ({ ...d, ...fresh }))
+    pushToast('success', written === 0 ? 'Nothing new to import' : `${written} rows imported`)
+    return written
+  }, [data.accounts, pushToast])
+
   const value = useMemo<StoreState>(() => ({
     signedIn,
     userEmail,
@@ -358,6 +430,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     skipTransaction,
     addRevenueRow,
     deleteRevenueRow,
+    prepareImport,
+    commitImport,
+    recordPdfStatement,
     toasts,
     pushToast,
     dismissToast,
@@ -365,7 +440,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     signedIn, userEmail, googleReady, mockMode, signIn, signOut,
     workspaces, activeWorkspaceId, setActiveWorkspace, connectWorkspace, disconnectWorkspace,
     data, loading, refresh, addAccount, markTransaction, skipTransaction,
-    addRevenueRow, deleteRevenueRow, toasts, pushToast, dismissToast,
+    addRevenueRow, deleteRevenueRow, prepareImport, commitImport, recordPdfStatement, toasts, pushToast, dismissToast,
   ])
 
   return <StoreContext.Provider value={value}>{children}</StoreContext.Provider>

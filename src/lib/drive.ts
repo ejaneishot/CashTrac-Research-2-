@@ -103,3 +103,15 @@ export async function findLedgersFolder(workspaceFolderId: string): Promise<stri
 
   return ledgers.id
 }
+
+
+// Upload a statement into _cashtrac/statements, creating the folder the first time
+export async function uploadStatement(
+  workspaceFolderId: string,
+  file: File,
+): Promise<{ id: string; webLink: string }> {
+  const existing = await listFolders(workspaceFolderId)
+  const found = existing.find((f) => f.name === 'statements')
+  const folderId = found?.id ?? (await createFolder(workspaceFolderId, 'statements'))
+  return uploadFile(folderId, `${Date.now()}-${file.name}`, file)
+}

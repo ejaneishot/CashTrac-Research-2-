@@ -12,6 +12,7 @@ import {
   saveRevenue,
   deleteRevenue,
   markSynced,
+  saveImportedTransactions,
 } from './repository'
 import type { AppData, Account, RevenueRow, Transaction } from '../types'
 
@@ -142,5 +143,65 @@ describe('accounts and revenue', () => {
     expect((await loadAll()).revenue).toHaveLength(1)
     await deleteRevenue('r1')
     expect((await loadAll()).revenue).toHaveLength(0)
+  })
+})
+
+describe('saveImportedTransactions', () => {
+  const imported: Transaction[] = [
+    tx({ id: 'imp-a1-aaa', description: 'Client payment', syncState: 'pending' }),
+    tx({ id: 'imp-a1-bbb', description: 'AWS servers', amount: -200_000, syncState: 'pending' }),
+  ]
+
+  it('writes the rows and leaves them waiting to sync', async () => {
+    const written = await saveImportedTransactions(imported)
+    expect(written).toBe(2)
+
+    const data = await loadAll()
+    expect(data.transactions).toHaveLength(2)
+    expect(await pendingTransactions()).toHaveLength(2)
+  })
+
+  it('adds nothing on a second run and keeps an edit made in between', async () => {
+    await saveImportedTransactions(imported)
+    await saveTransaction({ ...imported[0], category: 'client_income' })
+
+    const written = await saveImportedTransactions(imported)
+    expect(written).toBe(0)
+
+    const stored = await db.transactions.get('imp-a1-aaa')
+    expect(stored?.category).toBe('client_income')
+    expect((await loadAll()).transactions).toHaveLength(2)
+  })
+
+  it('does nothing when there is nothing to save', async () => {
+    expect(await saveImportedTransactions([])).toBe(0)
+  })
+})
+
+describe('hydrateAll keeps local-only work', () => {
+  it('does not mark a pending row as synced', async () => {
+    await hydrateAll({
+      groups: [],
+      accounts: [],
+      revenue: [],
+      transactions: [
+        tx({ id: 'from-sheet', syncState: 'synced' }),
+        tx({ id: 'imp-a1-aaa', syncState: 'pending' }),
+      ],
+    })
+
+    expect((await db.transactions.get('imp-a1-aaa'))?.syncState).toBe('pending')
+    expect((await db.transactions.get('from-sheet'))?.syncState).toBe('synced')
+    expect(await pendingTransactions()).toHaveLength(1)
+  })
+
+  it('treats a row with no sync state as synced, the way a fresh pull arrives', async () => {
+    await hydrateAll({
+      groups: [],
+      accounts: [],
+      revenue: [],
+      transactions: [{ ...tx({ id: 'plain' }), syncState: undefined }],
+    })
+    expect((await db.transactions.get('plain'))?.syncState).toBe('synced')
   })
 })
