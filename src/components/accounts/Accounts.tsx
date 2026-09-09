@@ -1,9 +1,10 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useState, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useStore } from '../../store'
 import { formatIDR } from '../../lib/money'
 import { relativeDayLabel } from '../../lib/dates'
 import type { AccountType, OwnerId } from '../../types'
+
 import { StatementDropzone } from '../import/StatementDropzone'
 import {
   Plus, X, UploadSimple, Building, DeviceMobile, Money, Globe,
@@ -25,7 +26,10 @@ export function Accounts() {
   const [type, setType] = useState<AccountType>('bank')
   const [groupId, setGroupId] = useState(data.groups[0]?.id ?? '')
   const [owner, setOwner] = useState<OwnerId>('nirmal')
-  const now = useMemo(() => Date.now(), [])
+    const now = useMemo(() => Date.now(), [])
+  useEffect(() => {
+    if (!groupId && data.groups.length > 0) setGroupId(data.groups[0].id)
+  }, [data.groups, groupId])
 
   const grouped = useMemo(() => {
     return data.groups.map((g) => ({

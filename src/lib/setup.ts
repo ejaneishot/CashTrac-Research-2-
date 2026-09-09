@@ -60,6 +60,10 @@ export async function initWorkspaceStructure(folderId: string): Promise<SetupRes
   await valuesUpdate(metaSpreadsheetId, 'Accounts!A1', [META_HEADERS.accounts])
   await valuesUpdate(metaSpreadsheetId, 'Groups!A1', [META_HEADERS.groups])
   await valuesUpdate(metaSpreadsheetId, 'Revenue!A1', [META_HEADERS.revenue])
+  await seedGroups(metaSpreadsheetId, [
+    { id: 'fastrac', name: 'Fastrac / Arcitech', accountIds: [], owner: 'shared' },
+    { id: 'nirmal-personal', name: 'Nirmal Personal', accountIds: [], owner: 'nirmal' },
+  ])
 
   // Move the Meta spreadsheet into the meta/ folder (Drive create defaults to root)
   const drive = window.gapi?.client.drive
