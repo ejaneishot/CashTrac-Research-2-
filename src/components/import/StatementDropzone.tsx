@@ -30,20 +30,8 @@ export function StatementDropzone({ accountId, onClose }: { accountId?: string; 
       return
     }
 
-    // A PDF cannot be read. Keep it in Drive and mark it for manual entry.
-    if (name.endsWith('.pdf')) {
-      setBusy(true)
-      try {
-        setPdfLink(await recordPdfStatement(file, target))
-      } catch (e) {
-        setError((e as Error).message)
-      } finally {
-        setBusy(false)
-      }
-      return
-    }
 
-    if (!name.endsWith('.csv') && !name.endsWith('.xlsx') && !name.endsWith('.xls')) {
+        if (!name.endsWith('.csv') && !name.endsWith('.xlsx') && !name.endsWith('.xls') && !name.endsWith('.pdf')) {
       setError('That file type cannot be read. Use a CSV, Excel or PDF statement.')
       return
     }
@@ -52,9 +40,20 @@ export function StatementDropzone({ accountId, onClose }: { accountId?: string; 
       return
     }
     setBusy(true)
-    try {
+       try {
       setReport(await prepareImport(file, target))
     } catch (e) {
+      if (name.endsWith('.pdf')) {
+        try {
+          setPdfLink(await recordPdfStatement(file, target))
+          setBusy(false)
+          return
+        } catch (inner) {
+          setError((inner as Error).message)
+          setBusy(false)
+          return
+        }
+      }
       setError((e as Error).message)
     } finally {
       setBusy(false)
@@ -86,7 +85,7 @@ export function StatementDropzone({ accountId, onClose }: { accountId?: string; 
       >
         <div className="flex items-start justify-between">
           <div>
-            <h2 className="text-xl font-semibold tracking-tight">Import statement</h2>
+  \          <h2 className="text-xl font-semibold tracking-tight">Import statement</h2>
             <p className="mt-1 text-[12.5px] text-ink-muted">
               {account ? account.name : 'No account selected'}
             </p>

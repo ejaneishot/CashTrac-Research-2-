@@ -1,5 +1,8 @@
 import { parse } from 'papaparse'
 import * as XLSX from 'xlsx'
+import { readPdfPieces } from './pdfText'
+import { parseBcaStatement, bcaRowsToRecords } from './bcaPdf'
+import { detectBank, readStatementDate, type BankProfile } from './bankProfiles'
 import {
   classifyRows,
   existingFingerprintSet,
@@ -304,7 +307,25 @@ export async function readCsvFile(file: File): Promise<{
   return recordsFromMatrix(parsed.data)
 }
 
-/** Read an Excel file into records. Same shape as readCsvFile, so the rest of the pipeline does not change. */
+function repairDates(raw: unknown[][], profile: BankProfile): string[][] {
+  return raw.map((row) =>
+    row.map((cell) => {
+      if (typeof cell === 'number' && cell > 20000 && cell < 90000) {
+        const asDate = new Date(Date.UTC(1899, 11, 30) + cell * 86400000)
+        const fixed = readStatementDate(
+          new Date(asDate.getUTCFullYear(), asDate.getUTCMonth(), asDate.getUTCDate()),
+          profile,
+        )
+        if (fixed) {
+          const d = String(fixed.getDate()).padStart(2, '0')
+          const m = String(fixed.getMonth() + 1).padStart(2, '0')
+          return d + '/' + m + '/' + fixed.getFullYear()
+        }
+      }
+      return cell == null ? '' : String(cell)
+    }),
+  )
+}
 export async function readExcelFile(file: File): Promise<{
   records: Record<string, string>[]
   headerRow: number
@@ -313,12 +334,34 @@ export async function readExcelFile(file: File): Promise<{
   const sheet = book.Sheets[book.SheetNames[0]]
   if (!sheet) return { records: [], headerRow: -1 }
 
-  // Read every cell as text so amounts and dates arrive the same way they do from a CSV.
+  // Read once as text to identify the bank, since detection only looks at labels.
   const matrix = XLSX.utils.sheet_to_json<string[]>(sheet, { header: 1, raw: false, defval: '' })
+  const profile = detectBank(matrix)
+
+  // blu's dates are wrong once formatted, so for blu we need the raw cell values
+  // and correct them ourselves. Other banks are fine as text.
+  if (profile.swapDateParts) {
+    const raw = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1, raw: true, defval: '' })
+    return recordsFromMatrix(repairDates(raw, profile))
+  }
+
   return recordsFromMatrix(matrix)
 }
 
-// Read a statement file (CSV or Excel) and return the records and header row index.
+async function readPdfFile(file: File): Promise<{
+  records: Record<string, string>[]
+  headerRow: number
+}> {
+  const pieces = await readPdfPieces(file)
+  const statement = parseBcaStatement(pieces)
+
+  if (statement.rows.length === 0) {
+    throw new Error('This PDF could not be read. Only BCA statements are supported so far.')
+  }
+
+  return { records: bcaRowsToRecords(statement), headerRow: 0 }
+}
+
 export async function readStatementFile(file: File): Promise<{
   records: Record<string, string>[]
   headerRow: number
@@ -326,5 +369,6 @@ export async function readStatementFile(file: File): Promise<{
   const name = file.name.toLowerCase()
   if (name.endsWith('.csv')) return readCsvFile(file)
   if (name.endsWith('.xlsx') || name.endsWith('.xls')) return readExcelFile(file)
-  throw new Error('Only CSV and Excel files can be read. PDF statements need manual entry.')
+    if (name.endsWith('.pdf')) return readPdfFile(file)
+  throw new Error('This file type cannot be read.')
 }
