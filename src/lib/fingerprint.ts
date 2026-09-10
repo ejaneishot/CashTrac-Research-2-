@@ -63,10 +63,14 @@ export function hashString(s: string): string {
   return h.toString(36)
 }
 
-/**
- * Parse a raw row into a normalized row. Returns null with a reason when
- * the row can't be parsed (missing date/description, bad amount).
- */
+function jeniusTxnId(desc: string): string | null {
+  const re = /\b(20\d{6})\s*(\d{4})\s*([a-z0-9]{2,4})\s*(\d{1,7})\b/g
+  let last: RegExpExecArray | null = null
+  let m: RegExpExecArray | null
+  while ((m = re.exec(desc)) !== null) last = m
+  return last ? last[1] + last[2] + last[3] + last[4] : null
+}
+
 export function normalizeRow(raw: RawRow): { ok: true; row: NormalizedRow } | { ok: false; reason: string } {
   const date = parseDate(raw.date)
   if (!date) return { ok: false, reason: `Unreadable date: ${String(raw.date)}` }
@@ -81,7 +85,7 @@ export function normalizeRow(raw: RawRow): { ok: true; row: NormalizedRow } | { 
   if (balance && !balance.ok) return { ok: false, reason: `Bad balance: ${String(raw.balance)}` }
 
   const normalizedDescription = normalizeDescription(desc)
-  const parts = [date, String(amt.value), normalizedDescription]
+    const parts = [date, String(amt.value), jeniusTxnId(normalizedDescription) ?? normalizedDescription]
   if (balance?.ok && balance.value !== undefined) parts.push(String(balance.value))
 
   return {

@@ -23,6 +23,7 @@ export function StatementDropzone({ accountId, onClose }: { accountId?: string; 
   const account = useMemo(() => data.accounts.find((a) => a.id === target), [data.accounts, target])
 
   const handleFile = useCallback(async (file: File) => {
+    
     setError(null)
         const name = file.name.toLowerCase()
     if (!target) {

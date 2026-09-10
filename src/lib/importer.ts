@@ -2,6 +2,7 @@ import { parse } from 'papaparse'
 import * as XLSX from 'xlsx'
 import { readPdfPieces } from './pdfText'
 import { parseBcaStatement, bcaRowsToRecords } from './bcaPdf'
+import { parseJeniusStatement, jeniusRowsToRecords } from './jeniusPdf'
 import { detectBank, readStatementDate, type BankProfile } from './bankProfiles'
 import {
   classifyRows,
@@ -353,13 +354,17 @@ async function readPdfFile(file: File): Promise<{
   headerRow: number
 }> {
   const pieces = await readPdfPieces(file)
-  const statement = parseBcaStatement(pieces)
-
-  if (statement.rows.length === 0) {
-    throw new Error('This PDF could not be read. Only BCA statements are supported so far.')
+    const bca = parseBcaStatement(pieces)
+  if (bca.rows.length > 0) {
+    return { records: bcaRowsToRecords(bca), headerRow: 0 }
   }
 
-  return { records: bcaRowsToRecords(statement), headerRow: 0 }
+  const jenius = parseJeniusStatement(pieces)
+  if (jenius.rows.length > 0) {
+    return { records: jeniusRowsToRecords(jenius), headerRow: 0 }
+  }
+
+  throw new Error('This PDF could not be read. Only BCA and Jenius statements are supported so far.')
 }
 
 export async function readStatementFile(file: File): Promise<{

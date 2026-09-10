@@ -45,15 +45,6 @@ export async function readPdfPieces(file: File): Promise<TextPiece[]> {
 export async function dumpPdfLayout(file: File): Promise<void> {
   const pieces = await readPdfPieces(file)
   console.log('total pieces', pieces.length, 'pages', Math.max(...pieces.map((p) => p.page)))
-    const parsed = parseBcaStatement(pieces)
-  console.log('account', parsed.accountNumber, 'year', parsed.year)
-  console.log('opening', parsed.openingBalance, 'closing', parsed.closingBalance)
-  console.log('rows', parsed.rows.length)
-  const total = parsed.rows.reduce((s, r) => s + r.amount, 0)
-  console.log('sum of rows', total)
-   if (parsed.openingBalance !== null && parsed.closingBalance !== null) {
-    console.log('expected closing', parsed.openingBalance + total, 'actual', parsed.closingBalance)
-  }
-  const last = pieces.filter((p) => p.page === 2 && p.y > 600 && p.y < 705)
-  console.table(last.map((p) => ({ y: p.y, x: p.x, text: p.text })))
+    const page2 = pieces.filter((p) => p.x < 40 && !/^\d/.test(p.text))
+  console.table(page2.map((p) => ({ y: p.y, x: p.x, text: p.text })))
 }
