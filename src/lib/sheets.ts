@@ -317,12 +317,17 @@ export async function updateTransactionRows(
       values: [transactionToRow(t)],
     }))
 
-  if (data.length === 0) return []
+  const missing = rows.filter((t) => !rowIndexById.has(t.id))
+  if (missing.length > 0) {
+    await appendRawRows(spreadsheetId, 'Transactions', missing.map((t) => transactionToRow(t)))
+  }
+
+  if (data.length === 0) return rows.map((t) => t.id)
 
   await sheets().spreadsheets.values.batchUpdate({
     spreadsheetId,
     resource: { valueInputOption: 'USER_ENTERED', data },
   })
 
-  return rows.filter((t) => rowIndexById.has(t.id)).map((t) => t.id)
+  return rows.map((t) => t.id)
 }

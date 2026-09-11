@@ -154,14 +154,14 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
     setLoading(true)
     try {
-      const remoteTime = await getModifiedTime(ws.metaSpreadsheetId)
-      if (remoteTime && remoteTime === lastMetaSync.current) {
-        setData(await loadAll())
-        return
-      }
+          const meta = await readMeta(ws.metaSpreadsheetId)
+    await flushPending(meta.accounts)
 
-      const meta = await readMeta(ws.metaSpreadsheetId)
-      await flushPending(meta.accounts)
+    const remoteTime = await getModifiedTime(ws.metaSpreadsheetId)
+    if (remoteTime && remoteTime === lastMetaSync.current) {
+      setData(await loadAll())
+      return
+    }
             const { transactions: remote, failedAccountIds } = await readAllTransactions(meta.accounts)
       const local = await loadAll()
 
